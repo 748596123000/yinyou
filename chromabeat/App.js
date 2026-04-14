@@ -75,6 +75,42 @@ class Ripple {
   }
 }
 
+// 难度级别配置
+const difficultyLevels = {
+  easy: {
+    name: '简单',
+    rippleInterval: 1200, // 毫秒
+    rippleSpeed: { min: 0.2, max: 0.3 },
+    rippleSize: { min: 15, max: 25 },
+    correctRate: 0.7, // 70% 正确波纹
+    trackCount: 6, // 减少轨道数量
+  },
+  normal: {
+    name: '普通',
+    rippleInterval: 1000,
+    rippleSpeed: { min: 0.3, max: 0.4 },
+    rippleSize: { min: 15, max: 20 },
+    correctRate: 0.7,
+    trackCount: 8,
+  },
+  hard: {
+    name: '困难',
+    rippleInterval: 800,
+    rippleSpeed: { min: 0.4, max: 0.5 },
+    rippleSize: { min: 10, max: 15 },
+    correctRate: 0.6, // 60% 正确波纹
+    trackCount: 8,
+  },
+  expert: {
+    name: '专家',
+    rippleInterval: 600,
+    rippleSpeed: { min: 0.5, max: 0.6 },
+    rippleSize: { min: 8, max: 12 },
+    correctRate: 0.5, // 50% 正确波纹
+    trackCount: 10, // 增加轨道数量
+  },
+};
+
 // 主游戏组件
 const ChromaBeatGame = () => {
   // 状态管理
@@ -84,8 +120,17 @@ const ChromaBeatGame = () => {
   const [ripples, setRipples] = useState([]);
   const [gameActive, setGameActive] = useState(false);
   const [selectedTheme, setSelectedTheme] = useState('red');
+  const [selectedDifficulty, setSelectedDifficulty] = useState('normal');
   const [songProgress, setSongProgress] = useState(0);
   const [currentSong, setCurrentSong] = useState(null);
+  const [particles, setParticles] = useState([]);
+  const [beatTimestamps, setBeatTimestamps] = useState([]);
+  const [currentBeatIndex, setCurrentBeatIndex] = useState(0);
+  
+  // 计算当前难度配置
+  const currentDifficulty = difficultyLevels[selectedDifficulty];
+  const trackCount = currentDifficulty.trackCount;
+  const trackAngle = (Math.PI * 2) / trackCount;
   
   // 动画值
   const ballScale = useSharedValue(1);
@@ -96,6 +141,7 @@ const ChromaBeatGame = () => {
   const gameLoopRef = useRef(null);
   const lastTimeRef = useRef(0);
   const soundRef = useRef(null);
+  const gameStartTimeRef = useRef(0);
   
   // 中心球动画
   useEffect(() => {
@@ -118,6 +164,61 @@ const ChromaBeatGame = () => {
     );
   }, []);
   
+  // 粒子类
+  class Particle {
+    constructor(x, y, color, size, velocityX, velocityY, life) {
+      this.x = x;
+      this.y = y;
+      this.color = color;
+      this.size = size;
+      this.velocityX = velocityX;
+      this.velocityY = velocityY;
+      this.life = life;
+      this.maxLife = life;
+    }
+
+    update(deltaTime) {
+      this.x += this.velocityX * deltaTime;
+      this.y += this.velocityY * deltaTime;
+      this.life -= deltaTime;
+      return this.life > 0;
+    }
+  }
+
+  // 生成粒子效果
+  const generateParticles = (x, y, color, count = 10) => {
+    const newParticles = [];
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 50 + Math.random() * 100;
+      const velocityX = Math.cos(angle) * speed;
+      const velocityY = Math.sin(angle) * speed;
+      const size = 2 + Math.random() * 3;
+      const life = 0.5 + Math.random() * 0.5;
+      newParticles.push(new Particle(x, y, color, size, velocityX, velocityY, life));
+    }
+    setParticles(prev => [...prev, ...newParticles]);
+  };
+
+  // 生成基于节拍的谱面
+  const generateBeatMap = () => {
+    const beats = [];
+    const totalBeats = 60; // 假设60个节拍
+    const interval = currentDifficulty.rippleInterval;
+    
+    for (let i = 0; i < totalBeats; i++) {
+      const timestamp = i * interval;
+      beats.push({
+        timestamp,
+        direction: Math.floor(Math.random() * trackCount),
+        isCorrect: Math.random() > (1 - currentDifficulty.correctRate),
+        size: currentDifficulty.rippleSize.min + Math.random() * (currentDifficulty.rippleSize.max - currentDifficulty.rippleSize.min),
+        speed: currentDifficulty.rippleSpeed.min + Math.random() * (currentDifficulty.rippleSpeed.max - currentDifficulty.rippleSpeed.min),
+      });
+    }
+    return beats;
+  };
+
   // 游戏循环
   useEffect(() => {
     if (gameActive) {
@@ -132,31 +233,45 @@ const ChromaBeatGame = () => {
           return updatedRipples;
         });
         
+        // 更新粒子
+        setParticles(prevParticles => {
+          const updatedParticles = prevParticles.filter(particle => particle.update(deltaTime));
+          return updatedParticles;
+        });
+        
+        // 检查节拍
+        const elapsedTime = timestamp - gameStartTimeRef.current;
+        while (currentBeatIndex < beatTimestamps.length && elapsedTime >= beatTimestamps[currentBeatIndex].timestamp) {
+          const beat = beatTimestamps[currentBeatIndex];
+          setRipples(prev => [
+            ...prev,
+            new Ripple(rippleIdCounter.current++, beat.direction, beat.isCorrect, beat.size, beat.speed)
+          ]);
+          setCurrentBeatIndex(prev => prev + 1);
+        }
+        
+        // 更新歌曲进度
+        setSongProgress(prev => Math.min(100, prev + (deltaTime * 100) / 60)); // 假设60秒歌曲
+        
         gameLoopRef.current = requestAnimationFrame(gameLoop);
       };
       
       gameLoopRef.current = requestAnimationFrame(gameLoop);
       
-      // 定期生成波纹
-      const rippleInterval = setInterval(() => {
-        generateRipple();
-      }, 1000);
-      
       return () => {
         if (gameLoopRef.current) {
           cancelAnimationFrame(gameLoopRef.current);
         }
-        clearInterval(rippleInterval);
       };
     }
-  }, [gameActive]);
+  }, [gameActive, currentBeatIndex, beatTimestamps]);
   
-  // 生成波纹
+  // 生成波纹（用于手动触发）
   const generateRipple = () => {
     const direction = Math.floor(Math.random() * trackCount);
-    const isCorrect = Math.random() > 0.3; // 70% 概率是正确波纹
-    const size = isCorrect ? 20 + Math.random() * 10 : 15 + Math.random() * 5;
-    const speed = 0.3 + Math.random() * 0.2;
+    const isCorrect = Math.random() > (1 - currentDifficulty.correctRate);
+    const size = currentDifficulty.rippleSize.min + Math.random() * (currentDifficulty.rippleSize.max - currentDifficulty.rippleSize.min);
+    const speed = currentDifficulty.rippleSpeed.min + Math.random() * (currentDifficulty.rippleSpeed.max - currentDifficulty.rippleSpeed.min);
     
     setRipples(prevRipples => [
       ...prevRipples,
@@ -202,6 +317,14 @@ const ChromaBeatGame = () => {
       );
       
       if (hitRipple) {
+        const theme = colorThemes[selectedTheme];
+        const color = hitRipple.isCorrect ? theme.primary : errorColors[selectedTheme][0];
+        
+        // 生成粒子效果
+        const hitX = centerX + Math.cos(hitRipple.direction * trackAngle) * (endDistance);
+        const hitY = centerY + Math.sin(hitRipple.direction * trackAngle) * (endDistance);
+        generateParticles(hitX, hitY, color);
+        
         // 正确操作
         if ((isInward && hitRipple.isCorrect) || (!isInward && !hitRipple.isCorrect)) {
           setCombo(prev => prev + 1);
@@ -222,11 +345,27 @@ const ChromaBeatGame = () => {
   };
   
   // 处理画圆手势
-  const handleCircle = () => {
+  const handleCircle = (event) => {
     if (!gameActive) return;
     
     // 清除屏幕上所有错误波纹
-    setRipples(prevRipples => prevRipples.filter(ripple => ripple.isCorrect));
+    setRipples(prevRipples => {
+      const errorRipples = prevRipples.filter(ripple => !ripple.isCorrect);
+      // 为每个错误波纹生成粒子效果
+      errorRipples.forEach(ripple => {
+        const theme = colorThemes[selectedTheme];
+        const color = errorColors[selectedTheme][0];
+        const rippleX = centerX + Math.cos(ripple.direction * trackAngle) * (ripple.position * (Math.min(width, height) / 2));
+        const rippleY = centerY + Math.sin(ripple.direction * trackAngle) * (ripple.position * (Math.min(width, height) / 2));
+        generateParticles(rippleX, rippleY, color, 5);
+      });
+      return prevRipples.filter(ripple => ripple.isCorrect);
+    });
+    
+    // 生成中心爆炸粒子效果
+    const theme = colorThemes[selectedTheme];
+    generateParticles(centerX, centerY, theme.primary, 20);
+    
     setCombo(prev => prev + 3);
     setPurity(prev => Math.min(100, prev + 15));
     setScore(prev => prev + 500 * (combo + 1));
@@ -270,6 +409,12 @@ const ChromaBeatGame = () => {
     setCombo(0);
     setPurity(100);
     setRipples([]);
+    setParticles([]);
+    setSongProgress(0);
+    setCurrentBeatIndex(0);
+    const beatMap = generateBeatMap();
+    setBeatTimestamps(beatMap);
+    gameStartTimeRef.current = performance.now();
     setGameActive(true);
     loadAndPlayMusic();
   };
@@ -371,6 +516,29 @@ const ChromaBeatGame = () => {
     });
   };
   
+  // 绘制粒子效果
+  const renderParticles = () => {
+    return particles.map((particle, index) => {
+      const alpha = particle.life / particle.maxLife;
+      return (
+        <View 
+          key={`particle-${index}`} 
+          style={[
+            styles.particle,
+            {
+              left: particle.x - particle.size / 2,
+              top: particle.y - particle.size / 2,
+              width: particle.size,
+              height: particle.size,
+              backgroundColor: particle.color,
+              opacity: alpha,
+            }
+          ]} 
+        />
+      );
+    });
+  };
+  
   // 手势配置
   const swipeGesture = Gesture.Pan()
     .onEnd(handleSwipe);
@@ -378,12 +546,27 @@ const ChromaBeatGame = () => {
   const circleGesture = Gesture.Pan()
     .minPointers(1)
     .maxPointers(1)
+    .onUpdate((event) => {
+      // 收集手势轨迹点
+      // 这里可以添加更复杂的轨迹分析逻辑
+    })
     .onEnd((event) => {
-      // 简单的画圆判定：检查移动距离和方向变化
-      const { translationX, translationY } = event;
+      // 优化的画圆判定：检查移动距离、方向变化和轨迹
+      const { translationX, translationY, velocityX, velocityY } = event;
       const distance = Math.sqrt(translationX * translationX + translationY * translationY);
-      if (distance > 100) {
-        handleCircle();
+      const velocity = Math.sqrt(velocityX * velocityX + velocityY * velocityY);
+      
+      // 更严格的画圆判定条件
+      // 1. 移动距离足够大
+      // 2. 速度适中
+      // 3. 轨迹应该形成一个近似圆形
+      if (distance > 150 && velocity > 100) {
+        // 计算轨迹的圆形度（简化版）
+        // 这里可以添加更复杂的圆形度计算
+        const aspectRatio = Math.abs(translationX / translationY);
+        if (aspectRatio > 0.5 && aspectRatio < 2) {
+          handleCircle(event);
+        }
       }
     });
   
@@ -416,6 +599,9 @@ const ChromaBeatGame = () => {
         
         {/* 波纹 */}
         {renderRipples()}
+        
+        {/* 粒子效果 */}
+        {renderParticles()}
         
         {/* 中心小球 */}
         <Animated.View 
@@ -461,6 +647,28 @@ const ChromaBeatGame = () => {
               ))}
             </View>
             
+            <Text style={styles.sectionTitle}>难度选择</Text>
+            <View style={styles.difficultySelector}>
+              {Object.keys(difficultyLevels).map(difficulty => (
+                <Pressable 
+                  key={difficulty} 
+                  style={[
+                    styles.difficultyButton,
+                    selectedDifficulty === difficulty && styles.difficultyButtonActive,
+                    { backgroundColor: selectedDifficulty === difficulty ? colorThemes[selectedTheme].primary : 'rgba(255, 255, 255, 0.2)' }
+                  ]}
+                  onPress={() => setSelectedDifficulty(difficulty)}
+                >
+                  <Text style={[
+                    styles.difficultyButtonText,
+                    selectedDifficulty === difficulty && styles.difficultyButtonTextActive
+                  ]}>
+                    {difficultyLevels[difficulty].name}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            
             <Pressable 
               style={[
                 styles.startButton,
@@ -492,6 +700,10 @@ const styles = StyleSheet.create({
     height: 2,
     borderRadius: 1,
     backgroundColor: '#FFFFFF',
+  },
+  particle: {
+    position: 'absolute',
+    borderRadius: 50,
   },
   track: {
     position: 'absolute',
@@ -582,6 +794,35 @@ const styles = StyleSheet.create({
   themeButtonActive: {
     borderColor: '#FFFFFF',
     boxShadow: '0 0 20px rgba(255, 255, 255, 0.8)',
+  },
+  sectionTitle: {
+    fontSize: 18,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginBottom: 20,
+  },
+  difficultySelector: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    marginBottom: 60,
+    gap: 10,
+  },
+  difficultyButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginHorizontal: 5,
+  },
+  difficultyButtonActive: {
+    boxShadow: '0 0 20px rgba(255, 255, 255, 0.8)',
+  },
+  difficultyButtonText: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  difficultyButtonTextActive: {
+    color: '#FFFFFF',
   },
   startButton: {
     paddingHorizontal: 60,
